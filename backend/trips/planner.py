@@ -179,10 +179,11 @@ def _ensure_on_duty_room(clocks, events, hours, miles):
         cycle_left = CYCLE_LIMIT_HOURS - clocks.cycle
         if window_left >= hours and cycle_left >= hours:
             return
-        if cycle_left < hours:
-            event = clocks.take_restart()
-        else:
-            event = clocks.take_reset()
+        event = (
+            clocks.take_restart()
+            if cycle_left < hours
+            else clocks.take_reset()
+        )
         event["miles"] = miles
         events.append(event)
 
@@ -207,45 +208,46 @@ def _drive_leg(clocks, events, miles, hours, total_miles, fuel_marks, label):
                 event = clocks.take_reset()
             event["miles"] = total_miles
             events.append(event)
-            continue
+        else:
+            candidates = [
+                mark
+                for mark in fuel_marks
+                if total_miles < mark <= total_miles + left_miles
+            ]
+            next_fuel = min(candidates, default=None)
 
-        next_fuel = None
-        for mark in fuel_marks:
-            if total_miles < mark <= total_miles + left_miles:
-                if next_fuel is None or mark < next_fuel:
-                    next_fuel = mark
-
-        chunk_miles = min(left_miles, allowed * speed)
-        if next_fuel is not None:
-            chunk_miles = min(chunk_miles, next_fuel - total_miles)
-        if chunk_miles <= 0:
-            event = clocks.take_reset()
-            event["miles"] = total_miles
-            events.append(event)
-            continue
-
-        chunk_hours = chunk_miles / speed
-        start = clocks.time
-        clocks.add_drive(chunk_hours)
-        total_miles += chunk_miles
-        left_miles -= chunk_miles
-        events.append(
-            make_event(DRIVING, start, clocks.time, total_miles, label)
-        )
-
-        if next_fuel is not None and abs(total_miles - next_fuel) < 1e-6:
-            _ensure_on_duty_room(clocks, events, FUEL_STOP_HOURS, total_miles)
-            start = clocks.time
-            clocks.add_on_duty(FUEL_STOP_HOURS)
-            events.append(
-                make_event(
-                    ON_DUTY,
-                    start,
-                    clocks.time,
-                    total_miles,
-                    f"Fuel stop at mile {int(next_fuel)}",
+            chunk_miles = min(left_miles, allowed * speed)
+            if next_fuel is not None:
+                chunk_miles = min(chunk_miles, next_fuel - total_miles)
+            if chunk_miles <= 0:
+                event = clocks.take_reset()
+                event["miles"] = total_miles
+                events.append(event)
+            else:
+                chunk_hours = chunk_miles / speed
+                start = clocks.time
+                clocks.add_drive(chunk_hours)
+                total_miles += chunk_miles
+                left_miles -= chunk_miles
+                events.append(
+                    make_event(DRIVING, start, clocks.time, total_miles, label)
                 )
-            )
+
+                if next_fuel is not None and abs(total_miles - next_fuel) < 1e-6:
+                    _ensure_on_duty_room(
+                        clocks, events, FUEL_STOP_HOURS, total_miles
+                    )
+                    start = clocks.time
+                    clocks.add_on_duty(FUEL_STOP_HOURS)
+                    events.append(
+                        make_event(
+                            ON_DUTY,
+                            start,
+                            clocks.time,
+                            total_miles,
+                            f"Fuel stop at mile {int(next_fuel)}",
+                        )
+                    )
 
     return total_miles
 
@@ -282,3 +284,37 @@ def build_timeline(distance, cycle_used=0):
     events.append(clocks.take_dropoff(total_miles))
 
     return events, clocks
+
+
+def split_daily_logs(events):
+    if not events:
+        return []
+
+    end_time = max(event["end"] for event in events)
+    day_count = max(1, int(end_time // 24) + (1 if end_time % 24 else 0))
+    if end_time == 0:
+        day_count = 1
+
+    logs = []
+    for day in range(day_count):
+        day_start = day * 24
+        day_end = day_start + 24
+        segments = [
+            {
+                "status": event["status"],
+                "start": max(event["start"], day_start) - day_start,
+                "end": min(event["end"], day_end) - day_start,
+                "miles": event["miles"],
+                "label": event["label"],
+            }
+            for event in events
+            if event["end"] > day_start and event["start"] < day_end
+        ]
+        logs.append(
+            {
+                "day": day + 1,
+                "start_hour": day_start,
+                "segments": segments,
+            }
+        )
+    return logs
