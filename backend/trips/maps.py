@@ -75,3 +75,23 @@ def route(stops):
     if data.get("code") != "Ok" or not data.get("routes"):
         return None, "Could not find a road route."
     return data["routes"][0], None
+
+
+def route_distance(road):
+    legs = [
+        {
+            "miles": leg["distance"] / 1609.344,
+            "minutes": leg["duration"] / 60,
+        }
+        for leg in road.get("legs", [])
+    ]
+    return {
+        "miles": road["distance"] / 1609.344,
+        "minutes": road["duration"] / 60,
+        "legs": legs,
+    }
+
+
+def route_geometry(road):
+    coordinates = road.get("geometry", {}).get("coordinates", [])
+    return [{"lat": lat, "lng": lng} for lng, lat in coordinates]
