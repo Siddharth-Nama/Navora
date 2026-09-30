@@ -6,6 +6,8 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
+_cache = {}
+
 
 def geocode(place):
     if isinstance(place, dict):
@@ -17,6 +19,9 @@ def geocode(place):
     query = str(place).strip()
     if not query:
         return None
+    key = query.casefold()
+    if key in _cache:
+        return _cache[key]
 
     response = httpx.get(
         os.environ.get("NOMINATIM_URL", "https://nominatim.openstreetmap.org/search"),
@@ -27,10 +32,13 @@ def geocode(place):
     response.raise_for_status()
     results = response.json()
     if not results:
+        _cache[key] = None
         return None
     hit = results[0]
-    return {
+    found = {
         "lat": float(hit["lat"]),
         "lng": float(hit["lon"]),
         "label": hit.get("display_name") or query,
     }
+    _cache[key] = found
+    return found
