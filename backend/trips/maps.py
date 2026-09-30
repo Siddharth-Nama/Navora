@@ -42,3 +42,13 @@ def geocode(place):
     }
     _cache[key] = found
     return found
+
+
+def geocode_stops(trip):
+    stops = {}
+    for field in ("current_location", "pickup_location", "dropoff_location"):
+        found = geocode(trip[field])
+        if found is None:
+            return None, f"Could not find {field}."
+        stops[field] = found
+    return stops, None
