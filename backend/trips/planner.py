@@ -107,3 +107,20 @@ class DriverClocks:
             0,
             "30-minute break",
         )
+
+    def hit_driving_limit(self):
+        return self.drive >= DRIVING_LIMIT_HOURS
+
+    def hit_duty_window(self):
+        return self.window >= DUTY_WINDOW_HOURS
+
+    def stop_reason(self):  # sourcery skip: assign-if-exp, reintroduce-else
+        if self.since_break >= BREAK_AFTER_DRIVING_HOURS:
+            return "break"
+        if self.drive >= DRIVING_LIMIT_HOURS:
+            return "driving_limit"
+        if self.window >= DUTY_WINDOW_HOURS:
+            return "duty_window"
+        if self.cycle >= CYCLE_LIMIT_HOURS:
+            return "cycle"
+        return None
