@@ -14,13 +14,13 @@ ON_DUTY = "on_duty"
 OFF_DUTY = "off_duty"
 
 
-def make_event(status, start, end, miles, label):
+def make_event(status, start, end, miles, event_type):
     return {
         "status": status,
         "start": start,
         "end": end,
         "miles": miles,
-        "label": label,
+        "type": event_type,
     }
 
 
@@ -40,7 +40,7 @@ def fuel_stop_event(start, mile):
         start,
         end,
         mile,
-        f"Fuel stop at mile {mile}",
+        "fuel",
     )
 
 
@@ -105,7 +105,7 @@ class DriverClocks:
             start,
             self.time,
             0,
-            "30-minute break",
+            "break",
         )
 
     def hit_driving_limit(self):
@@ -133,7 +133,7 @@ class DriverClocks:
             start,
             self.time,
             0,
-            "10-hour reset",
+            "reset",
         )
 
     def hit_cycle(self):
@@ -147,7 +147,7 @@ class DriverClocks:
             start,
             self.time,
             0,
-            "34-hour cycle restart",
+            "restart",
         )
 
     def take_pickup(self, miles):
@@ -158,7 +158,7 @@ class DriverClocks:
             start,
             self.time,
             miles,
-            "Pickup",
+            "pickup",
         )
 
     def take_dropoff(self, miles):
@@ -169,7 +169,7 @@ class DriverClocks:
             start,
             self.time,
             miles,
-            "Dropoff",
+            "dropoff",
         )
 
 
@@ -223,12 +223,12 @@ def _add_fuel_stop(clocks, events, total_miles, next_fuel):
             start,
             clocks.time,
             total_miles,
-            f"Fuel stop at mile {int(next_fuel)}",
+            "fuel",
         )
     )
 
 
-def _drive_chunk(clocks, events, speed, left_miles, total_miles, fuel_marks, label):
+def _drive_chunk(clocks, events, speed, left_miles, total_miles, fuel_marks, event_type):
     allowed = clocks.drive_until_limit()
     if allowed <= 0:
         _rest_for_limit(clocks, events, total_miles)
@@ -246,14 +246,14 @@ def _drive_chunk(clocks, events, speed, left_miles, total_miles, fuel_marks, lab
     clocks.add_drive(chunk_miles / speed)
     total_miles += chunk_miles
     left_miles -= chunk_miles
-    events.append(make_event(DRIVING, start, clocks.time, total_miles, label))
+    events.append(make_event(DRIVING, start, clocks.time, total_miles, event_type))
 
     if next_fuel is not None and abs(total_miles - next_fuel) < 1e-6:
         _add_fuel_stop(clocks, events, total_miles, next_fuel)
     return left_miles, total_miles
 
 
-def _drive_leg(clocks, events, miles, hours, total_miles, fuel_marks, label):
+def _drive_leg(clocks, events, miles, hours, total_miles, fuel_marks, event_type):
     if miles <= 0:
         return total_miles
     if hours <= 0:
@@ -269,7 +269,7 @@ def _drive_leg(clocks, events, miles, hours, total_miles, fuel_marks, label):
             left_miles,
             total_miles,
             fuel_marks,
-            label,
+            event_type,
         )
     return total_miles
 
@@ -279,28 +279,19 @@ def build_timeline(distance, cycle_used=0):
     events = []
     total_miles = 0.0
     fuel_marks = fuel_stop_miles(distance["miles"])
-    legs = distance["legs"]
+    leg = distance["legs"][0]
 
-    total_miles = _drive_leg(
-        clocks,
-        events,
-        legs[0]["miles"],
-        legs[0]["minutes"] / 60,
-        total_miles,
-        fuel_marks,
-        "Drive to pickup",
-    )
     _ensure_on_duty_room(clocks, events, PICKUP_HOURS, total_miles)
     events.append(clocks.take_pickup(total_miles))
 
     total_miles = _drive_leg(
         clocks,
         events,
-        legs[1]["miles"],
-        legs[1]["minutes"] / 60,
+        leg["miles"],
+        leg["minutes"] / 60,
         total_miles,
         fuel_marks,
-        "Drive to dropoff",
+        "drive",
     )
     _ensure_on_duty_room(clocks, events, DROPOFF_HOURS, total_miles)
     events.append(clocks.take_dropoff(total_miles))
@@ -327,7 +318,7 @@ def split_daily_logs(events):
                 "start": max(event["start"], day_start) - day_start,
                 "end": min(event["end"], day_end) - day_start,
                 "miles": event["miles"],
-                "label": event["label"],
+                "type": event["type"],
             }
             for event in events
             if event["end"] > day_start and event["start"] < day_end
@@ -348,12 +339,10 @@ def summarize_trip(events, distance, clocks):
         for event in events
         if event["status"] == DRIVING
     )
-    fuel_stops = sum(1 for event in events if event["label"].startswith("Fuel"))
-    resets = sum(1 for event in events if event["label"] == "10-hour reset")
-    restarts = sum(
-        1 for event in events if event["label"] == "34-hour cycle restart"
-    )
-    breaks = sum(1 for event in events if event["label"] == "30-minute break")
+    fuel_stops = sum(1 for event in events if event["type"] == "fuel")
+    resets = sum(1 for event in events if event["type"] == "reset")
+    restarts = sum(1 for event in events if event["type"] == "restart")
+    breaks = sum(1 for event in events if event["type"] == "break")
     days = len(split_daily_logs(events))
     warnings = []
     if breaks:

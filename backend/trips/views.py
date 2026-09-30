@@ -1,4 +1,5 @@
 import json
+import logging
 
 import httpx
 from django.http import JsonResponse
@@ -13,11 +14,8 @@ from trips.maps import (
 )
 from trips.planner import build_timeline, split_daily_logs, summarize_trip
 
-DEFAULT_CURRENT_LOCATION = {
-    "lat": 32.7767,
-    "lng": -96.797,
-    "label": "Dallas, TX",
-}
+logger = logging.getLogger(__name__)
+
 DEFAULT_CYCLE_USED = 0.0
 
 
@@ -28,17 +26,20 @@ def health(request):
 def read_location(field, value):
     if value is None:
         return None, f"{field} is required."
-    if isinstance(value, str) and value.strip():
-        return value.strip(), None
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None, f"{field} is required."
+        return text, None
     if isinstance(value, dict) and "lat" in value and "lng" in value:
         try:
-            return {
-                "lat": float(value["lat"]),
-                "lng": float(value["lng"]),
-                "label": value.get("label"),
-            }, None
+            lat = float(value["lat"])
+            lng = float(value["lng"])
         except (TypeError, ValueError):
             return None, f"{field} coordinates must be numbers."
+        if not (-90 <= lat <= 90) or not (-180 <= lng <= 180):
+            return None, f"{field} coordinates are out of range."
+        return {"lat": lat, "lng": lng}, None
     return None, f"{field} must be a place name or coordinates."
 
 
@@ -51,15 +52,6 @@ def read_trip_input(body):
         return None, "Request body must be a JSON object."
 
     trip = {}
-
-    if "current_location" not in data or data.get("current_location") in (None, ""):
-        trip["current_location"] = dict(DEFAULT_CURRENT_LOCATION)
-    else:
-        value, error = read_location("current_location", data.get("current_location"))
-        if error:
-            return None, error
-        trip["current_location"] = value
-
     for field in ("pickup_location", "dropoff_location"):
         value, error = read_location(field, data.get(field))
         if error:
@@ -89,17 +81,21 @@ def plan_trip(request):
 
     try:
         stops, error = geocode_stops(trip)
+    except httpx.TimeoutException:
+        logger.warning("Geocode timed out for trip=%s", trip)
+        return JsonResponse({"error": "Map lookup timed out."}, status=502)
     except httpx.HTTPError:
+        logger.warning("Geocode failed for trip=%s", trip)
         return JsonResponse({"error": "Map lookup failed."}, status=502)
     if error:
         return JsonResponse({"error": error}, status=400)
 
-    try:
-        road, error = route(stops)
-    except httpx.HTTPError:
-        return JsonResponse({"error": "Route lookup failed."}, status=502)
+    road, error = route(stops)
     if error:
-        return JsonResponse({"error": error}, status=502)
+        status = 502
+        if error.startswith("No road route"):
+            status = 400
+        return JsonResponse({"error": error}, status=status)
 
     distance = route_distance(road)
     geometry = route_geometry(road)
@@ -114,7 +110,7 @@ def plan_trip(request):
         point = point_at_mile(geometry, event["miles"]) or {}
         stop_points.append(
             {
-                "label": event["label"],
+                "type": event["type"],
                 "status": event["status"],
                 "hours": event["start"],
                 "miles": event["miles"],
