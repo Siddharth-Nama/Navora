@@ -318,3 +318,35 @@ def split_daily_logs(events):
             }
         )
     return logs
+
+
+def summarize_trip(events, distance, clocks):
+    drive_hours = sum(
+        event["end"] - event["start"]
+        for event in events
+        if event["status"] == DRIVING
+    )
+    fuel_stops = sum(1 for event in events if event["label"].startswith("Fuel"))
+    resets = sum(1 for event in events if event["label"] == "10-hour reset")
+    restarts = sum(
+        1 for event in events if event["label"] == "34-hour cycle restart"
+    )
+    breaks = sum(1 for event in events if event["label"] == "30-minute break")
+    days = len(split_daily_logs(events))
+    warnings = []
+    if breaks:
+        warnings.append(f"{breaks} required 30-minute break(s).")
+    if resets:
+        warnings.append(f"{resets} 10-hour reset(s).")
+    if restarts:
+        warnings.append(f"{restarts} 34-hour cycle restart(s).")
+    if fuel_stops:
+        warnings.append(f"{fuel_stops} fuel stop(s).")
+    return {
+        "miles": round(distance["miles"], 1),
+        "drive_hours": round(drive_hours, 2),
+        "total_hours": round(clocks.time, 2),
+        "days": days,
+        "fuel_stops": fuel_stops,
+        "warnings": warnings,
+    }

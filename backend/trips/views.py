@@ -3,9 +3,33 @@ import json
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
+from trips.maps import (
+    geocode_stops,
+    point_at_mile,
+    route,
+    route_distance,
+    route_geometry,
+)
+from trips.planner import build_timeline, split_daily_logs, summarize_trip
+
 
 def health(request):
     return JsonResponse({"status": "ok"})
+
+
+def read_location(field, value):
+    if isinstance(value, str) and value.strip():
+        return value.strip(), None
+    if isinstance(value, dict) and "lat" in value and "lng" in value:
+        try:
+            return {
+                "lat": float(value["lat"]),
+                "lng": float(value["lng"]),
+                "label": value.get("label"),
+            }, None
+        except (TypeError, ValueError):
+            return None, f"{field} coordinates must be numbers."
+    return None, f"{field} must be a place name or coordinates."
 
 
 def read_trip_input(body):
@@ -18,10 +42,10 @@ def read_trip_input(body):
 
     trip = {}
     for field in ("current_location", "pickup_location", "dropoff_location"):
-        value = data.get(field)
-        if not isinstance(value, str) or not value.strip():
-            return None, f"{field} is required."
-        trip[field] = value.strip()
+        value, error = read_location(field, data.get(field))
+        if error:
+            return None, error
+        trip[field] = value
 
     hours = data.get("current_cycle_used")
     if isinstance(hours, bool) or not isinstance(hours, (int, float)):
@@ -39,4 +63,52 @@ def plan_trip(request):
     trip, error = read_trip_input(request.body)
     if error:
         return JsonResponse({"error": error}, status=400)
-    return JsonResponse(trip)
+
+    stops, error = geocode_stops(trip)
+    if error:
+        return JsonResponse({"error": error}, status=400)
+
+    road, error = route(stops)
+    if error:
+        return JsonResponse({"error": error}, status=502)
+
+    distance = route_distance(road)
+    geometry = route_geometry(road)
+    events, clocks = build_timeline(distance, trip["current_cycle_used"])
+    logs = split_daily_logs(events)
+    summary = summarize_trip(events, distance, clocks)
+
+    stop_points = []
+    for event in events:
+        if event["status"] == "driving":
+            continue
+        point = point_at_mile(geometry, event["miles"]) or {
+            "lat": None,
+            "lng": None,
+        }
+        stop_points.append(
+            {
+                "label": event["label"],
+                "status": event["status"],
+                "hours": event["start"],
+                "miles": event["miles"],
+                "lat": point.get("lat"),
+                "lng": point.get("lng"),
+            }
+        )
+
+    return JsonResponse(
+        {
+            "stops": stops,
+            "route": {
+                "miles": distance["miles"],
+                "minutes": distance["minutes"],
+                "legs": distance["legs"],
+                "geometry": geometry,
+            },
+            "events": events,
+            "markers": stop_points,
+            "logs": logs,
+            "summary": summary,
+        }
+    )
