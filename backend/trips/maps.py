@@ -52,3 +52,26 @@ def geocode_stops(trip):
             return None, f"Could not find {field}."
         stops[field] = found
     return stops, None
+
+
+def route(stops):
+    points = (
+        stops["current_location"],
+        stops["pickup_location"],
+        stops["dropoff_location"],
+    )
+    coords = ";".join(f"{point['lng']},{point['lat']}" for point in points)
+    base = os.environ.get(
+        "OSRM_URL",
+        "https://router.project-osrm.org/route/v1/driving",
+    ).rstrip("/")
+    response = httpx.get(
+        f"{base}/{coords}",
+        params={"overview": "full", "geometries": "geojson"},
+        timeout=float(os.environ.get("MAP_TIMEOUT_SECONDS", "8")),
+    )
+    response.raise_for_status()
+    data = response.json()
+    if data.get("code") != "Ok" or not data.get("routes"):
+        return None, "Could not find a road route."
+    return data["routes"][0], None
