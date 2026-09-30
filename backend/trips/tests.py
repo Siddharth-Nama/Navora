@@ -49,3 +49,52 @@ class TripInputTests(TestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertIn("current_cycle_used", response.json()["error"])
+
+
+class BreakRuleTests(TestCase):
+    def test_thirty_minute_break_after_eight_hours_driving(self):
+        from trips.planner import build_timeline
+
+        distance = {
+            "miles": 600,
+            "minutes": 600,
+            "legs": [
+                {"miles": 100, "minutes": 100},
+                {"miles": 500, "minutes": 500},
+            ],
+        }
+        events, _clocks = build_timeline(distance, cycle_used=0)
+        labels = [event["label"] for event in events]
+        self.assertIn("30-minute break", labels)
+
+        break_event = next(
+            event for event in events if event["label"] == "30-minute break"
+        )
+        self.assertEqual(break_event["status"], "off_duty")
+        self.assertAlmostEqual(break_event["end"] - break_event["start"], 0.5)
+
+
+class DrivingLimitTests(TestCase):
+    def test_driving_stops_at_eleven_hours(self):
+        from trips.planner import build_timeline
+
+        distance = {
+            "miles": 900,
+            "minutes": 900,
+            "legs": [
+                {"miles": 100, "minutes": 100},
+                {"miles": 800, "minutes": 800},
+            ],
+        }
+        events, _clocks = build_timeline(distance, cycle_used=0)
+        labels = [event["label"] for event in events]
+        self.assertIn("10-hour reset", labels)
+
+        drive_before_reset = 0.0
+        for event in events:
+            if event["label"] == "10-hour reset":
+                break
+            if event["status"] == "driving":
+                drive_before_reset += event["end"] - event["start"]
+        self.assertLessEqual(drive_before_reset, 11.0 + 1e-6)
+        self.assertGreater(drive_before_reset, 10.0)
