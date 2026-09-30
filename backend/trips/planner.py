@@ -81,3 +81,15 @@ class DriverClocks:
             "since_break": self.since_break,
             "cycle": self.cycle,
         }
+
+    def drive_until_limit(self):
+        remaining = [
+            DRIVING_LIMIT_HOURS - self.drive,
+            DUTY_WINDOW_HOURS - self.window,
+            BREAK_AFTER_DRIVING_HOURS - self.since_break,
+            CYCLE_LIMIT_HOURS - self.cycle,
+        ]
+        hours = min(remaining)
+        if hours <= 0:
+            return 0.0
+        return hours
