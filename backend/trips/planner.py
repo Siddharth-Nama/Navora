@@ -124,3 +124,161 @@ class DriverClocks:
         if self.cycle >= CYCLE_LIMIT_HOURS:
             return "cycle"
         return None
+
+    def take_reset(self):
+        start = self.time
+        self.add_off_duty(RESET_HOURS)
+        return make_event(
+            OFF_DUTY,
+            start,
+            self.time,
+            0,
+            "10-hour reset",
+        )
+
+    def hit_cycle(self):
+        return self.cycle >= CYCLE_LIMIT_HOURS
+
+    def take_restart(self):
+        start = self.time
+        self.add_off_duty(RESTART_HOURS)
+        return make_event(
+            OFF_DUTY,
+            start,
+            self.time,
+            0,
+            "34-hour cycle restart",
+        )
+
+    def take_pickup(self, miles):
+        start = self.time
+        self.add_on_duty(PICKUP_HOURS)
+        return make_event(
+            ON_DUTY,
+            start,
+            self.time,
+            miles,
+            "Pickup",
+        )
+
+    def take_dropoff(self, miles):
+        start = self.time
+        self.add_on_duty(DROPOFF_HOURS)
+        return make_event(
+            ON_DUTY,
+            start,
+            self.time,
+            miles,
+            "Dropoff",
+        )
+
+
+def _ensure_on_duty_room(clocks, events, hours, miles):
+    while True:
+        window_left = DUTY_WINDOW_HOURS - clocks.window
+        cycle_left = CYCLE_LIMIT_HOURS - clocks.cycle
+        if window_left >= hours and cycle_left >= hours:
+            return
+        if cycle_left < hours:
+            event = clocks.take_restart()
+        else:
+            event = clocks.take_reset()
+        event["miles"] = miles
+        events.append(event)
+
+
+def _drive_leg(clocks, events, miles, hours, total_miles, fuel_marks, label):
+    if miles <= 0:
+        return total_miles
+    if hours <= 0:
+        hours = miles / 55.0
+    speed = miles / hours
+    left_miles = miles
+
+    while left_miles > 1e-6:
+        allowed = clocks.drive_until_limit()
+        if allowed <= 0:
+            reason = clocks.stop_reason()
+            if reason == "break" and DUTY_WINDOW_HOURS - clocks.window >= BREAK_HOURS:
+                event = clocks.take_break()
+            elif reason == "cycle":
+                event = clocks.take_restart()
+            else:
+                event = clocks.take_reset()
+            event["miles"] = total_miles
+            events.append(event)
+            continue
+
+        next_fuel = None
+        for mark in fuel_marks:
+            if total_miles < mark <= total_miles + left_miles:
+                if next_fuel is None or mark < next_fuel:
+                    next_fuel = mark
+
+        chunk_miles = min(left_miles, allowed * speed)
+        if next_fuel is not None:
+            chunk_miles = min(chunk_miles, next_fuel - total_miles)
+        if chunk_miles <= 0:
+            event = clocks.take_reset()
+            event["miles"] = total_miles
+            events.append(event)
+            continue
+
+        chunk_hours = chunk_miles / speed
+        start = clocks.time
+        clocks.add_drive(chunk_hours)
+        total_miles += chunk_miles
+        left_miles -= chunk_miles
+        events.append(
+            make_event(DRIVING, start, clocks.time, total_miles, label)
+        )
+
+        if next_fuel is not None and abs(total_miles - next_fuel) < 1e-6:
+            _ensure_on_duty_room(clocks, events, FUEL_STOP_HOURS, total_miles)
+            start = clocks.time
+            clocks.add_on_duty(FUEL_STOP_HOURS)
+            events.append(
+                make_event(
+                    ON_DUTY,
+                    start,
+                    clocks.time,
+                    total_miles,
+                    f"Fuel stop at mile {int(next_fuel)}",
+                )
+            )
+
+    return total_miles
+
+
+def build_timeline(distance, cycle_used=0):
+    clocks = DriverClocks(cycle_used)
+    events = []
+    total_miles = 0.0
+    fuel_marks = fuel_stop_miles(distance["miles"])
+    legs = distance["legs"]
+
+    total_miles = _drive_leg(
+        clocks,
+        events,
+        legs[0]["miles"],
+        legs[0]["minutes"] / 60,
+        total_miles,
+        fuel_marks,
+        "Drive to pickup",
+    )
+    _ensure_on_duty_room(clocks, events, PICKUP_HOURS, total_miles)
+    events.append(clocks.take_pickup(total_miles))
+
+    total_miles = _drive_leg(
+        clocks,
+        events,
+        legs[1]["miles"],
+        legs[1]["minutes"] / 60,
+        total_miles,
+        fuel_marks,
+        "Drive to dropoff",
+    )
+    _ensure_on_duty_room(clocks, events, DROPOFF_HOURS, total_miles)
+    events.append(clocks.take_dropoff(total_miles))
+
+    return events, clocks
