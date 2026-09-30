@@ -98,3 +98,37 @@ class DrivingLimitTests(TestCase):
                 drive_before_reset += event["end"] - event["start"]
         self.assertLessEqual(drive_before_reset, 11.0 + 1e-6)
         self.assertGreater(drive_before_reset, 10.0)
+
+
+class DutyWindowTests(TestCase):
+    def test_duty_window_stops_at_fourteen_hours(self):
+        from trips.planner import DriverClocks
+
+        clocks = DriverClocks(0)
+        clocks.add_drive(8)
+        clocks.take_break()
+        clocks.add_drive(2)
+        clocks.add_on_duty(3.5)
+
+        self.assertAlmostEqual(clocks.window, 14.0)
+        self.assertTrue(clocks.hit_duty_window())
+        self.assertEqual(clocks.stop_reason(), "duty_window")
+        self.assertEqual(clocks.drive_until_limit(), 0.0)
+
+
+class ResetTests(TestCase):
+    def test_ten_hour_reset_opens_a_new_window(self):
+        from trips.planner import DriverClocks
+
+        clocks = DriverClocks(cycle_used=20)
+        clocks.add_drive(11)
+        self.assertTrue(clocks.hit_driving_limit())
+
+        event = clocks.take_reset()
+        self.assertEqual(event["label"], "10-hour reset")
+        self.assertAlmostEqual(event["end"] - event["start"], 10.0)
+        self.assertEqual(clocks.drive, 0.0)
+        self.assertEqual(clocks.window, 0.0)
+        self.assertEqual(clocks.since_break, 0.0)
+        self.assertEqual(clocks.cycle, 31.0)
+        self.assertEqual(clocks.drive_until_limit(), 8.0)
