@@ -1,3 +1,4 @@
+import math
 import os
 from pathlib import Path
 
@@ -95,3 +96,35 @@ def route_distance(road):
 def route_geometry(road):
     coordinates = road.get("geometry", {}).get("coordinates", [])
     return [{"lat": lat, "lng": lng} for lng, lat in coordinates]
+
+
+def _miles_between(a, b):
+    lat1, lng1 = math.radians(a["lat"]), math.radians(a["lng"])
+    lat2, lng2 = math.radians(b["lat"]), math.radians(b["lng"])
+    dlat = lat2 - lat1
+    dlng = lng2 - lng1
+    h = (
+        math.sin(dlat / 2) ** 2
+        + math.cos(lat1) * math.cos(lat2) * math.sin(dlng / 2) ** 2
+    )
+    return 3958.7613 * 2 * math.asin(math.sqrt(h))
+
+
+def point_at_mile(points, miles):
+    if not points:
+        return None
+    if miles <= 0:
+        return points[0]
+    walked = 0.0
+    for start, end in zip(points, points[1:]):
+        segment = _miles_between(start, end)
+        if walked + segment >= miles:
+            if segment == 0:
+                return end
+            ratio = (miles - walked) / segment
+            return {
+                "lat": start["lat"] + (end["lat"] - start["lat"]) * ratio,
+                "lng": start["lng"] + (end["lng"] - start["lng"]) * ratio,
+            }
+        walked += segment
+    return points[-1]
