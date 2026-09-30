@@ -13,12 +13,21 @@ from trips.maps import (
 )
 from trips.planner import build_timeline, split_daily_logs, summarize_trip
 
+DEFAULT_CURRENT_LOCATION = {
+    "lat": 32.7767,
+    "lng": -96.797,
+    "label": "Dallas, TX",
+}
+DEFAULT_CYCLE_USED = 0.0
+
 
 def health(request):
     return JsonResponse({"status": "ok"})
 
 
 def read_location(field, value):
+    if value is None:
+        return None, f"{field} is required."
     if isinstance(value, str) and value.strip():
         return value.strip(), None
     if isinstance(value, dict) and "lat" in value and "lng" in value:
@@ -42,18 +51,30 @@ def read_trip_input(body):
         return None, "Request body must be a JSON object."
 
     trip = {}
-    for field in ("current_location", "pickup_location", "dropoff_location"):
+
+    if "current_location" not in data or data.get("current_location") in (None, ""):
+        trip["current_location"] = dict(DEFAULT_CURRENT_LOCATION)
+    else:
+        value, error = read_location("current_location", data.get("current_location"))
+        if error:
+            return None, error
+        trip["current_location"] = value
+
+    for field in ("pickup_location", "dropoff_location"):
         value, error = read_location(field, data.get(field))
         if error:
             return None, error
         trip[field] = value
 
-    hours = data.get("current_cycle_used")
-    if isinstance(hours, bool) or not isinstance(hours, (int, float)):
-        return None, "current_cycle_used must be a number from 0 to 70."
-    if hours < 0 or hours > 70:
-        return None, "current_cycle_used must be a number from 0 to 70."
-    trip["current_cycle_used"] = float(hours)
+    if "current_cycle_used" not in data or data.get("current_cycle_used") is None:
+        trip["current_cycle_used"] = DEFAULT_CYCLE_USED
+    else:
+        hours = data.get("current_cycle_used")
+        if isinstance(hours, bool) or not isinstance(hours, (int, float)):
+            return None, "current_cycle_used must be a number from 0 to 70."
+        if hours < 0 or hours > 70:
+            return None, "current_cycle_used must be a number from 0 to 70."
+        trip["current_cycle_used"] = float(hours)
     return trip, None
 
 

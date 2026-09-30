@@ -10,6 +10,10 @@ load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 _cache = {}
 
 
+def map_timeout():
+    return float(os.environ.get("MAP_TIMEOUT_SECONDS", "8"))
+
+
 def geocode(place):
     if isinstance(place, dict):
         lat = float(place["lat"])
@@ -28,7 +32,7 @@ def geocode(place):
         os.environ.get("NOMINATIM_URL", "https://nominatim.openstreetmap.org/search"),
         params={"q": query, "format": "json", "limit": 1},
         headers={"User-Agent": os.environ.get("MAP_USER_AGENT", "navora-trip-planner")},
-        timeout=float(os.environ.get("MAP_TIMEOUT_SECONDS", "8")),
+        timeout=map_timeout(),
     )
     response.raise_for_status()
     results = response.json()
@@ -69,7 +73,7 @@ def route(stops):
     response = httpx.get(
         f"{base}/{coords}",
         params={"overview": "full", "geometries": "geojson"},
-        timeout=float(os.environ.get("MAP_TIMEOUT_SECONDS", "8")),
+        timeout=map_timeout(),
     )
     response.raise_for_status()
     data = response.json()
