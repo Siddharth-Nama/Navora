@@ -90,6 +90,20 @@ class DriverClocks:
             CYCLE_LIMIT_HOURS - self.cycle,
         ]
         hours = min(remaining)
-        if hours <= 0:
-            return 0.0
-        return hours
+        return 0.0 if hours <= 0 else hours
+
+    def needs_break(self):
+        return self.since_break >= BREAK_AFTER_DRIVING_HOURS
+
+    def take_break(self):
+        start = self.time
+        self.time += BREAK_HOURS
+        self.window += BREAK_HOURS
+        self.since_break = 0.0
+        return make_event(
+            OFF_DUTY,
+            start,
+            self.time,
+            0,
+            "30-minute break",
+        )
