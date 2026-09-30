@@ -188,6 +188,71 @@ def _ensure_on_duty_room(clocks, events, hours, miles):
         events.append(event)
 
 
+def _append_at_mile(events, event, miles):
+    event["miles"] = miles
+    events.append(event)
+
+
+def _rest_for_limit(clocks, events, miles):
+    reason = clocks.stop_reason()
+    if reason == "break" and DUTY_WINDOW_HOURS - clocks.window >= BREAK_HOURS:
+        event = clocks.take_break()
+    elif reason == "cycle":
+        event = clocks.take_restart()
+    else:
+        event = clocks.take_reset()
+    _append_at_mile(events, event, miles)
+
+
+def _next_fuel_mark(fuel_marks, total_miles, left_miles):
+    candidates = [
+        mark
+        for mark in fuel_marks
+        if total_miles < mark <= total_miles + left_miles
+    ]
+    return min(candidates, default=None)
+
+
+def _add_fuel_stop(clocks, events, total_miles, next_fuel):
+    _ensure_on_duty_room(clocks, events, FUEL_STOP_HOURS, total_miles)
+    start = clocks.time
+    clocks.add_on_duty(FUEL_STOP_HOURS)
+    events.append(
+        make_event(
+            ON_DUTY,
+            start,
+            clocks.time,
+            total_miles,
+            f"Fuel stop at mile {int(next_fuel)}",
+        )
+    )
+
+
+def _drive_chunk(clocks, events, speed, left_miles, total_miles, fuel_marks, label):
+    allowed = clocks.drive_until_limit()
+    if allowed <= 0:
+        _rest_for_limit(clocks, events, total_miles)
+        return left_miles, total_miles
+
+    next_fuel = _next_fuel_mark(fuel_marks, total_miles, left_miles)
+    chunk_miles = min(left_miles, allowed * speed)
+    if next_fuel is not None:
+        chunk_miles = min(chunk_miles, next_fuel - total_miles)
+    if chunk_miles <= 0:
+        _append_at_mile(events, clocks.take_reset(), total_miles)
+        return left_miles, total_miles
+
+    start = clocks.time
+    clocks.add_drive(chunk_miles / speed)
+    total_miles += chunk_miles
+    left_miles -= chunk_miles
+    events.append(make_event(DRIVING, start, clocks.time, total_miles, label))
+
+    if next_fuel is not None and abs(total_miles - next_fuel) < 1e-6:
+        _add_fuel_stop(clocks, events, total_miles, next_fuel)
+    return left_miles, total_miles
+
+
 def _drive_leg(clocks, events, miles, hours, total_miles, fuel_marks, label):
     if miles <= 0:
         return total_miles
@@ -197,58 +262,15 @@ def _drive_leg(clocks, events, miles, hours, total_miles, fuel_marks, label):
     left_miles = miles
 
     while left_miles > 1e-6:
-        allowed = clocks.drive_until_limit()
-        if allowed <= 0:
-            reason = clocks.stop_reason()
-            if reason == "break" and DUTY_WINDOW_HOURS - clocks.window >= BREAK_HOURS:
-                event = clocks.take_break()
-            elif reason == "cycle":
-                event = clocks.take_restart()
-            else:
-                event = clocks.take_reset()
-            event["miles"] = total_miles
-            events.append(event)
-        else:
-            candidates = [
-                mark
-                for mark in fuel_marks
-                if total_miles < mark <= total_miles + left_miles
-            ]
-            next_fuel = min(candidates, default=None)
-
-            chunk_miles = min(left_miles, allowed * speed)
-            if next_fuel is not None:
-                chunk_miles = min(chunk_miles, next_fuel - total_miles)
-            if chunk_miles <= 0:
-                event = clocks.take_reset()
-                event["miles"] = total_miles
-                events.append(event)
-            else:
-                chunk_hours = chunk_miles / speed
-                start = clocks.time
-                clocks.add_drive(chunk_hours)
-                total_miles += chunk_miles
-                left_miles -= chunk_miles
-                events.append(
-                    make_event(DRIVING, start, clocks.time, total_miles, label)
-                )
-
-                if next_fuel is not None and abs(total_miles - next_fuel) < 1e-6:
-                    _ensure_on_duty_room(
-                        clocks, events, FUEL_STOP_HOURS, total_miles
-                    )
-                    start = clocks.time
-                    clocks.add_on_duty(FUEL_STOP_HOURS)
-                    events.append(
-                        make_event(
-                            ON_DUTY,
-                            start,
-                            clocks.time,
-                            total_miles,
-                            f"Fuel stop at mile {int(next_fuel)}",
-                        )
-                    )
-
+        left_miles, total_miles = _drive_chunk(
+            clocks,
+            events,
+            speed,
+            left_miles,
+            total_miles,
+            fuel_marks,
+            label,
+        )
     return total_miles
 
 

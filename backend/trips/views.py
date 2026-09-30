@@ -1,5 +1,6 @@
 import json
 
+import httpx
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
@@ -60,15 +61,22 @@ def read_trip_input(body):
 def plan_trip(request):
     if request.method != "POST":
         return JsonResponse({"error": "POST required."}, status=405)
+
     trip, error = read_trip_input(request.body)
     if error:
         return JsonResponse({"error": error}, status=400)
 
-    stops, error = geocode_stops(trip)
+    try:
+        stops, error = geocode_stops(trip)
+    except httpx.HTTPError:
+        return JsonResponse({"error": "Map lookup failed."}, status=502)
     if error:
         return JsonResponse({"error": error}, status=400)
 
-    road, error = route(stops)
+    try:
+        road, error = route(stops)
+    except httpx.HTTPError:
+        return JsonResponse({"error": "Route lookup failed."}, status=502)
     if error:
         return JsonResponse({"error": error}, status=502)
 
@@ -82,10 +90,7 @@ def plan_trip(request):
     for event in events:
         if event["status"] == "driving":
             continue
-        point = point_at_mile(geometry, event["miles"]) or {
-            "lat": None,
-            "lng": None,
-        }
+        point = point_at_mile(geometry, event["miles"]) or {}
         stop_points.append(
             {
                 "label": event["label"],

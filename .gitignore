@@ -8,6 +8,15 @@ env/
 .env.*
 !.env.example
 
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
 # Django
 *.log
@@ -17,3 +26,9 @@ db.sqlite3-journal
 media/
 staticfiles/
 
+# Editors and OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
